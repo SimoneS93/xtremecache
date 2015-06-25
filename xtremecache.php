@@ -3,7 +3,7 @@
 /**
  * Serve cached pages with no request processing
  * @author Salerno Simone
- * @version 1.0.1
+ * @version 1.0.3
  * @license MIT
  */
 class XtremeCache extends Module {
@@ -12,7 +12,7 @@ class XtremeCache extends Module {
     public function __construct() {
         $this->name = 'xtremecache';
         $this->tab = 'frontend_features';
-        $this->version = '1.0';
+        $this->version = '1.0.3';
         $this->author = 'Simone Salerno';
 
         parent::__construct();
@@ -44,19 +44,22 @@ class XtremeCache extends Module {
      * @param array $params
      */
     public function hookActionDispatcher($params) {
-        if (!$this->isActive()) return;
+        if (!$this->isActive())
+            return;
         
         $controller_type = $params['controller_type'];
         
-        //if front page and user not logged
-        if (Dispatcher::FC_FRONT === $controller_type) {
+        //if front page and not in the checkout process
+        if ($params['controller_class'] != 'OrderController' && 
+                $params['controller_class'] != 'OrderOpcController' && 
+                Dispatcher::FC_FRONT === $controller_type) {
+            
             $cache = $this->getCachedPage();
-			
             if (FALSE !== $cache) {
-                //empty output buffer
-                ob_get_clean();
-                die($cache);
-            }
+               //empty output buffer
+               ob_get_clean();
+               die($cache);
+           }
         }
     }
     
@@ -65,7 +68,8 @@ class XtremeCache extends Module {
      * @param string $params
      */
     public function hookActionRequestComplete($params) {
-        if (!$this->isActive()) return;
+        if (!$this->isActive())
+            return;
         
         $controller = $params['controller'];
         
@@ -91,7 +95,7 @@ class XtremeCache extends Module {
      */
     private function isActive() {
         $active = !Tools::getValue('ajax', false);
-        $active = $active && filter_input(INPUT_REQUEST, 'REQUEST_METHOD') === 'GET';
+        $active = $active && filter_input(INPUT_SERVER, 'REQUEST_METHOD') === 'GET';
         
         //check that customer is not logged in
         $customer = $this->context->customer;
@@ -100,8 +104,10 @@ class XtremeCache extends Module {
         
         //for guest checkout, check that cart is empty
         $cart = $this->context->cart;
-        if ($cart && $cart instanceof Cart)
-            $active = $active && empty($cart->getProducts());
+        if ($cart && $cart instanceof Cart){
+            $products = $cart->getProducts();
+            $active = $active && empty($products);
+        }
 		
         return $active;
     }
@@ -130,6 +136,9 @@ class XtremeCache extends Module {
         if ($url === null)
             $url = filter_input(INPUT_SERVER, 'REQUEST_URI');
         
-        return __DIR__.DS.'xcache'.DS.md5($url).'.html';
+        $url .= '-lang-'.$this->context->language->id.'-shop-'.$this->context->shop->id;
+        $hash = md5($url);
+        
+        return __DIR__.DS.'xcache'.DS.$hash.'.html';
     }
 }
