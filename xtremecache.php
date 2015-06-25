@@ -3,16 +3,27 @@
 /**
  * Serve cached pages with no request processing
  * @author Salerno Simone
- * @version 1.0.3
+ * @version 1.0.4
  * @license MIT
  */
+
+require __DIR__.DS.'vendor'.DS.'phpfastcache.php';
+
 class XtremeCache extends Module {
-    const CACHE_TTL = 18000; //Cache Time-To-Live
+    /**
+     * Cache Time-To-Live in seconds 
+     */
+    const CACHE_TTL = 30;
+    /**
+     * Cache engine
+     * @var BasePhpFastCache
+     */
+    private $cache;
     
     public function __construct() {
         $this->name = 'xtremecache';
         $this->tab = 'frontend_features';
-        $this->version = '1.0.3';
+        $this->version = '1.0.4';
         $this->author = 'Simone Salerno';
 
         parent::__construct();
@@ -20,18 +31,26 @@ class XtremeCache extends Module {
         $this->displayName = $this->l('Xtreme cache');
         $this->description = $this->l('Cache non-dynamic pages in the front office.');
         $this->bootstrap = true;
+        $this->cache = $this->getCacheEngine();
     }
     
+    /**
+     * Install and register hooks
+     * @return bool
+     */
     public function install() {
         return parent::install() && 
                 $this->registerHook('actionDispatcher') &&
                 $this->registerHook('actionRequestComplete');
     }
     
+    /**
+     * Uninstall and clear cache
+     * @return bool
+     */
     public function uninstall() {
         //delete all cached files
-        $dirname = dirname($this->getCacheFilename('fake_url'));
-        array_walk(scandir($dirname), 'unlink');
+        $this->cache->clean();
         
         return $this->unregisterHook('actionDispatcher') &&
                 $this->unregisterHook('actionRequestComplete') &&
@@ -54,11 +73,12 @@ class XtremeCache extends Module {
                 $params['controller_class'] != 'OrderOpcController' && 
                 Dispatcher::FC_FRONT === $controller_type) {
             
-            $cache = $this->getCachedPage();
-            if (FALSE !== $cache) {
+            $cached = $this->cache->get($this->getCacheKey());
+            
+            if (NULL !== $cached) {
                //empty output buffer
                ob_get_clean();
-               die($cache);
+               die($cached);
            }
         }
     }
@@ -77,15 +97,7 @@ class XtremeCache extends Module {
             require_once(_PS_TOOL_DIR_.'minify_html'.DS.'minify_html.class.php');
             
             $output = Minify_HTML::minify($params['output']);
-            $filename = $this->getCacheFilename();
-            $dirname = dirname($filename);
-            
-            //create cache dir if not exists
-            if (!is_dir($dirname))
-                mkdir($dirname, 0666);
-            
-            file_put_contents($filename, $output);
-			
+            $this->cache->set($this->getCacheKey(), $output, static::CACHE_TTL);		
         }
     }
     
@@ -111,34 +123,26 @@ class XtremeCache extends Module {
 		
         return $active;
     }
-
+    
     /**
-     * Get cached content if exists
+     * Get cache engine
+     * @return BasePhpFastCache 
      */
-    private function getCachedPage() {
-        $filename = $this->getCacheFilename();
-        
-        //check age validity. Delete old cache files
-        if (file_exists($filename) && time() - filectime($filename) > static::CACHE_TTL) {
-            @unlink($filename);
-            return FALSE;
-        }
-        
-        return @file_get_contents($filename);
+    private function getCacheEngine() {
+        phpFastCache::setup('path', __DIR__.DS.'xcache');
+        return phpFastCache();
     }
     
     /**
-     * Map url to local file
-     * @param string $url
-     * @return string
+     * Map url to cache key
+     * @return string 
      */
-    private function getCacheFilename($url=null) {
-        if ($url === null)
+    private function getCacheKey($url=NULL) {
+        if ($url === NULL)
             $url = filter_input(INPUT_SERVER, 'REQUEST_URI');
         
-        $url .= '-lang-'.$this->context->language->id.'-shop-'.$this->context->shop->id;
-        $hash = md5($url);
-        
-        return __DIR__.DS.'xcache'.DS.$hash.'.html';
+        $url = 'lang-'.$this->context->language->id.'-shop-'.$this->context->shop->id.'-'.$url;
+        $url = str_replace(_PS_BASE_URL_, '', $url);
+        return $url;
     }
 }
