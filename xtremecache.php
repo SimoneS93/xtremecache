@@ -3,16 +3,29 @@
 /**
  * Serve cached pages with no request processing
  * @author Salerno Simone
- * @version 1.0.3
+ * @version 1.0.5
  * @license MIT
  */
+
+require __DIR__.DS.'vendor'.DS.'phpfastcache.php';
+
 class XtremeCache extends Module {
-    const CACHE_TTL = 18000; //Cache Time-To-Live
+    /**
+     * Cache Time-To-Live in seconds
+     */
+    const CACHE_TTL = 18000;
+    
+    /**
+     * Cache engine
+     * @var BasePhpFastCache
+     */
+    private $fast_cache;
+    
     
     public function __construct() {
         $this->name = 'xtremecache';
         $this->tab = 'frontend_features';
-        $this->version = '1.0.3';
+        $this->version = '1.0.5';
         $this->author = 'Simone Salerno';
 
         parent::__construct();
@@ -20,18 +33,46 @@ class XtremeCache extends Module {
         $this->displayName = $this->l('Xtreme cache');
         $this->description = $this->l('Cache non-dynamic pages in the front office.');
         $this->bootstrap = true;
+        $this->fast_cache = $this->getFastCache();
     }
     
-    public function install() {
+    /**
+     * Handle hook non-explicitly handled
+     * @param string $name hook name
+     * @param array $arguments
+     */
+    public function __call($name, $arguments) {        
+        if (0 === strpos(strtolower($name), 'hookaction')) {
+            $this->fast_cache->clean();
+        }
+    }
+
+    /**
+     * Install and register hooks
+     * @return bool
+     */
+    public function install() {        
         return parent::install() && 
                 $this->registerHook('actionDispatcher') &&
-                $this->registerHook('actionRequestComplete');
+                $this->registerHook('actionRequestComplete') &&
+                $this->registerHook('actionCategoryAdd') &&
+                $this->registerHook('actionCategoryUpdate') &&
+                $this->registerHook('actionCategoryDelete') &&
+                $this->registerHook('actionProductAdd') &&
+                $this->registerHook('actionProductUpdate') &&
+                $this->registerHook('actionProductDelete') &&
+                $this->registerHook('actionProductSave') &&
+                $this->registerHook('actionUpdateQUantity') &&
+                $this->registerHook('actionEmptySmartyCache');
     }
     
+    /**
+     * Uninstall and clear cache
+     * @return bool
+     */
     public function uninstall() {
         //delete all cached files
-        $dirname = dirname($this->getCacheFilename('fake_url'));
-        array_walk(scandir($dirname), 'unlink');
+        $this->fast_cache->clean();
         
         return $this->unregisterHook('actionDispatcher') &&
                 $this->unregisterHook('actionRequestComplete') &&
@@ -50,15 +91,16 @@ class XtremeCache extends Module {
         $controller_type = $params['controller_type'];
         
         //if front page and not in the checkout process
-        if ($params['controller_class'] != 'OrderController' && 
-                $params['controller_class'] != 'OrderOpcController' && 
-                Dispatcher::FC_FRONT === $controller_type) {
+        if ($params['controller_class'] !== 'OrderController' && 
+            $params['controller_class'] !== 'OrderOpcController' && 
+            Dispatcher::FC_FRONT === $controller_type) {
             
-            $cache = $this->getCachedPage();
-            if (FALSE !== $cache) {
+            $cached = $this->fast_cache->get($this->getCacheKey());
+            
+            if (NULL !== $cached) {
                //empty output buffer
                ob_get_clean();
-               die($cache);
+               die($cached);
            }
         }
     }
@@ -73,22 +115,19 @@ class XtremeCache extends Module {
         
         $controller = $params['controller'];
         
-        if (is_subclass_of($controller, 'FrontController')) {
+        if (is_subclass_of($controller, 'FrontController') &&
+            !is_subclass_of($controller, 'OrderController') &&
+            !is_subclass_of($controller, 'OrderOpcController')) {
+            
             require_once(_PS_TOOL_DIR_.'minify_html'.DS.'minify_html.class.php');
-            
+            $key = $this->getCacheKey();
             $output = Minify_HTML::minify($params['output']);
-            $filename = $this->getCacheFilename();
-            $dirname = dirname($filename);
-            
-            //create cache dir if not exists
-            if (!is_dir($dirname))
-                mkdir($dirname, 0666);
-            
-            file_put_contents($filename, $output);
-			
+            //mark page as cached
+            $output = '<!-- served from cache with key '.$key.' -->'.$output;
+            $this->fast_cache->set($key, $output, static::CACHE_TTL);		
         }
     }
-    
+
     /**
      * Check if should use cache
      * @return boolean
@@ -111,34 +150,30 @@ class XtremeCache extends Module {
 		
         return $active;
     }
-
+    
     /**
-     * Get cached content if exists
+     * Get cache engine
+     * @return BasePhpFastCache 
      */
-    private function getCachedPage() {
-        $filename = $this->getCacheFilename();
-        
-        //check age validity. Delete old cache files
-        if (file_exists($filename) && time() - filectime($filename) > static::CACHE_TTL) {
-            @unlink($filename);
-            return FALSE;
-        }
-        
-        return @file_get_contents($filename);
+    private function getFastCache() {
+        phpFastCache::setup('path', __DIR__.DS.'xcache');
+        return phpFastCache('sqlite');
     }
     
     /**
-     * Map url to local file
-     * @param string $url
-     * @return string
+     * Map url to cache key
+     * @return string 
      */
-    private function getCacheFilename($url=null) {
-        if ($url === null)
+    private function getCacheKey($url=NULL) {
+        if ($url === NULL)
             $url = filter_input(INPUT_SERVER, 'REQUEST_URI');
         
-        $url .= '-lang-'.$this->context->language->id.'-shop-'.$this->context->shop->id;
-        $hash = md5($url);
+        $url = 'device-'.$this->context->getDevice().
+                '-lang-'.$this->context->language->id.
+                '-shop-'.$this->context->shop->id.'-'.
+                $url;
         
-        return __DIR__.DS.'xcache'.DS.$hash.'.html';
+        $url = md5($url);
+        return $url;
     }
 }
