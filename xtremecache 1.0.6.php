@@ -3,7 +3,7 @@
 /**
  * Serve cached pages with no request processing
  * @author Salerno Simone
- * @version 1.0.5
+ * @version 1.0.6
  * @license MIT
  */
 
@@ -12,8 +12,9 @@ require __DIR__.DS.'vendor'.DS.'phpfastcache.php';
 class XtremeCache extends Module {
     /**
      * Cache Time-To-Live in seconds
+     * Since cache gets cleaned quite often, use a very high value
      */
-    const CACHE_TTL = 18000;
+    const CACHE_TTL = 999999;
     
     /**
      * Cache engine
@@ -25,19 +26,18 @@ class XtremeCache extends Module {
     public function __construct() {
         $this->name = 'xtremecache';
         $this->tab = 'frontend_features';
-        $this->version = '1.0.5';
+        $this->version = '1.0.6';
         $this->author = 'Simone Salerno';
 
         parent::__construct();
 
         $this->displayName = $this->l('Xtreme cache');
         $this->description = $this->l('Cache non-dynamic pages in the front office.');
-        $this->bootstrap = true;
         $this->fast_cache = $this->getFastCache();
     }
     
     /**
-     * Handle hook non-explicitly handled
+     * Handle non-explicitly handled hooks
      * @param string $name hook name
      * @param array $arguments
      */
@@ -122,7 +122,7 @@ class XtremeCache extends Module {
             $key = $this->getCacheKey();
             $output = Minify_HTML::minify($params['output']);
             //mark page as cached
-            $output = '<!-- served from cache with key '.$key.' -->'.$output;
+            $output = '<!-- served from cache -->'.$output;
             $this->fast_cache->set($key, $output, static::CACHE_TTL);		
         }
     }
@@ -133,19 +133,18 @@ class XtremeCache extends Module {
      */
     private function isActive() {
         $active = !Tools::getValue('ajax', false);
-        $active = $active && filter_input(INPUT_SERVER, 'REQUEST_METHOD') === 'GET';
+        $active = $active && $_SERVER['REQUEST_METHOD'] === 'GET';
         
         //check that customer is not logged in
         $customer = $this->context->customer;
-        if ($customer && $customer instanceof Customer)
-            $active = $active && !$customer->isLogged();
+        if ($customer && $customer instanceof Customer && $customer->id > 0)
+            return false;
         
-        //check that cart is empty
-        //$this->context->cart doesn't work properly --> use cookie
-        global $cookie;
+        //for guest checkout, check that cart is empty
+	global $cookie;
         $cart = new Cart($cookie->id_cart);
-        $cartHasProducts = $cart->getLastProduct();
-        $active = $active && $cartHasProducts;
+        if ($cart && $cart instanceof Cart && $cart->nbProducts() > 0)
+            return false;
 		
         return $active;
     }
@@ -165,9 +164,9 @@ class XtremeCache extends Module {
      */
     private function getCacheKey($url=NULL) {
         if ($url === NULL)
-            $url = filter_input(INPUT_SERVER, 'REQUEST_URI');
+            $url = $_SERVER['REQUEST_URI'];
         
-        $url = 'device-'.$this->getDevice().
+        $url = 'device-'.$this->context->getDevice().
                 '-lang-'.$this->context->language->id.
                 '-shop-'.$this->context->shop->id.'-'.
                 $url;
@@ -175,14 +174,4 @@ class XtremeCache extends Module {
         $url = md5($url);
         return $url;
     }
-    
-    /**
-     * Polyfill for Prestashop 1.6 Context::getDevice()
-     * @return string type of device
-     */
-     private function getDevice() {
-     	require_once(_PS_TOOL_DIR_.'mobile_Detect/Mobile_Detect.php');
-		$mobile_detect = new Mobile_Detect();
-		return $mobile_detect->isTablet() ? 'tablet' : ($mobile_detect->isMobile() ? 'mobile' : 'desktop');
-     }
 }
