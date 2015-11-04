@@ -133,20 +133,24 @@ class XtremeCache extends Module {
      * @return boolean
      */
     private function isActive() {
-        $active = !Tools::getValue('ajax', false);
-        $active = $active && filter_input(INPUT_SERVER, 'REQUEST_METHOD') === 'GET';
+        //turn off on debug mode
+        if (_PS_MODE_DEV_ || _PS_DEBUG_PROFILING_)
+            return false;
         
         //check that customer is not logged in
         $customer = $this->context->customer;
-        if ($customer && $customer instanceof Customer)
-            $active = $active && !$customer->isLogged();
+        if ($customer && $customer instanceof Customer && $customer->id > 0)
+            return false;
         
         //for guest checkout, check that cart is empty
-        $cart = $this->context->cart;
-        if ($cart && $cart instanceof Cart){
-            $products = $cart->getProducts();
-            $active = $active && empty($products);
-        }
+	global $cookie;
+        $cart = new Cart($cookie->id_cart);
+        if ($cart && $cart instanceof Cart && $cart->nbProducts() > 0)
+            return false;
+            
+        //disable on ajax and non-GET requests
+        $active = !Tools::getValue('ajax', false);
+        $active = $active && $_SERVER['REQUEST_METHOD'] === 'GET';
 		
         return $active;
     }
