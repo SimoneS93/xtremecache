@@ -132,8 +132,9 @@ class XtremeCache extends Module {
      * @return boolean
      */
     private function isActive() {
-        $active = !Tools::getValue('ajax', false);
-        $active = $active && $_SERVER['REQUEST_METHOD'] === 'GET';
+        //turn off on debug mode
+        if (_PS_MODE_DEV_ || _PS_DEBUG_PROFILING_)
+            return false;
         
         //check that customer is not logged in
         $customer = $this->context->customer;
@@ -145,6 +146,10 @@ class XtremeCache extends Module {
         $cart = new Cart($cookie->id_cart);
         if ($cart && $cart instanceof Cart && $cart->nbProducts() > 0)
             return false;
+            
+        //disable on ajax and non-GET requests
+        $active = !Tools::getValue('ajax', false);
+        $active = $active && $_SERVER['REQUEST_METHOD'] === 'GET';
 		
         return $active;
     }
