@@ -17,6 +17,11 @@ class XtremeCache extends Module {
     const CACHE_TTL = 999999;
     
     /**
+     * Cache driver
+     */
+    const DRIVER = 'sqlite';
+    
+    /**
      * Cache engine
      * @var BasePhpFastCache
      */
@@ -122,7 +127,13 @@ class XtremeCache extends Module {
             $key = $this->getCacheKey();
             $output = Minify_HTML::minify($params['output']);
             //mark page as cached
-            $output = '<!-- served from cache -->'.$output;
+            $debugInfo = sprintf(
+            	"<!-- served from cache with key %s [driver: %s] [generated on %s] -->",
+            	$key,
+            	static::DRIVER,
+            	date('Y-m-d H:i:s')
+            );
+            $output = $debugInfo . $output;
             $this->fast_cache->set($key, $output, static::CACHE_TTL);		
         }
     }
