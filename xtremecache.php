@@ -1,192 +1,233 @@
 <?php
 
 /**
- * Serve cached pages with no request processing
- * @author Salerno Simone
- * @version 1.0.5
- * @license MIT
+ * Full page cache for Prestashop
+ *
+ * @author Simone Salerno
  */
+class Xtremecache extends Module
+{
+    /** @var int cache expire time in seconds **/
+    const TTL = 3600*24*7;
+    
+    /** @var boolean wether cache should be cleaned on catalog updates **/
+    const REACTIVE = true;
+    
+    /** @var boolean wether a custom header should be sent **/
+    const CUSTOMER_HEADER = true;
+    
+    /** @var array of int Don"t cache certain languages **/
+    const EXCLUDED_LANGS = [];
+    
+    /** @var array of int Don"t cache certain countries **/
+    const EXCLUDE_COUNTRIES = [];
+    
+    /** @var array of int Don"t cache certain currencies **/
+    const EXCLUDE_CURRENCIES = [];
+    
+    /** @var array of int Don"t cache certain shops **/
+    const EXCLUDE_SHOPS = [];
+    
+    /** @var CacheCore **/
+    private $cache;
+    
 
-require __DIR__.DS.'vendor'.DS.'phpfastcache.php';
-
-class XtremeCache extends Module {
-    /**
-     * Cache Time-To-Live in seconds
-     */
-    const CACHE_TTL = 18000;
-    
-    /**
-     * Cache engine
-     * @var BasePhpFastCache
-     */
-    private $fast_cache;
-    
-    
-    public function __construct() {
-        $this->name = 'xtremecache';
-        $this->tab = 'frontend_features';
-        $this->version = '1.0.5';
-        $this->author = 'Simone Salerno';
-
-        parent::__construct();
-
-        $this->displayName = $this->l('Xtreme cache');
-        $this->description = $this->l('Cache non-dynamic pages in the front office.');
-        $this->bootstrap = true;
-        $this->fast_cache = $this->getFastCache();
-    }
-    
-    /**
-     * Handle hook non-explicitly handled
-     * @param string $name hook name
-     * @param array $arguments
-     */
-    public function __call($name, $arguments) {        
-        if (0 === strpos(strtolower($name), 'hookaction')) {
-            $this->fast_cache->clean();
-        }
-    }
-
-    /**
-     * Install and register hooks
-     * @return bool
-     */
-    public function install() {        
-        return parent::install() && 
-                $this->registerHook('actionDispatcher') &&
-                $this->registerHook('actionRequestComplete') &&
-                $this->registerHook('actionCategoryAdd') &&
-                $this->registerHook('actionCategoryUpdate') &&
-                $this->registerHook('actionCategoryDelete') &&
-                $this->registerHook('actionProductAdd') &&
-                $this->registerHook('actionProductUpdate') &&
-                $this->registerHook('actionProductDelete') &&
-                $this->registerHook('actionProductSave') &&
-                $this->registerHook('actionEmptySmartyCache');
-    }
-    
-    /**
-     * Uninstall and clear cache
-     * @return bool
-     */
-    public function uninstall() {
-        //delete all cached files
-        $this->fast_cache->clean();
-        
-        return $this->unregisterHook('actionDispatcher') &&
-                $this->unregisterHook('actionRequestComplete') &&
-                parent::uninstall();
-    }
-    
-    /**
-     * Check if page exists in cache
-     * If it exists, serve and abort
-     * @param array $params
-     */
-    public function hookActionDispatcher($params) {
-        if (!$this->isActive())
-            return;
-        
-        $controller_type = $params['controller_type'];
-        
-        //if front page and not in the checkout process
-        if ($params['controller_class'] !== 'OrderController' && 
-            $params['controller_class'] !== 'OrderOpcController' && 
-            Dispatcher::FC_FRONT === $controller_type) {
+    public function __construct()
+    {
+            $this->name = "xtremecache";
+            $this->tab = "front_office_features";
+            $this->version = "1.0.0";
+            $this->author = "Simone Salerno";
+            $this->need_instance = 0;
+            $this->bootstrap = true;
             
-            $cached = $this->fast_cache->get($this->getCacheKey());
+            parent::__construct();
+
+            $this->displayName = $this->l("Xtreme cache");
+            $this->description = $this->l("Full page cache for Prestashop.");
+            $this->ps_versions_compliancy = array("min" => "1.6", "max" => "1.6.99.99");
             
-            if (NULL !== $cached) {
-               //empty output buffer
-               ob_get_clean();
-               die($cached);
-           }
-        }
+            $this->cache = Cache::getInstance();
     }
     
     /**
-     * Cache page content for front pages
-     * @param string $params
-     */
-    public function hookActionRequestComplete($params) {
-        if (!$this->isActive())
-            return;
-        
-        $controller = $params['controller'];
-        
-        if (is_subclass_of($controller, 'FrontController') &&
-            !is_subclass_of($controller, 'OrderController') &&
-            !is_subclass_of($controller, 'OrderOpcController')) {
-            
-            require_once(_PS_TOOL_DIR_.'minify_html'.DS.'minify_html.class.php');
-            $key = $this->getCacheKey();
-            $output = Minify_HTML::minify($params['output']);
-            //mark page as cached
-            $output = '<!-- served from cache with key '.$key.' -->'.$output;
-            $this->fast_cache->set($key, $output, static::CACHE_TTL);		
-        }
-    }
-
-    /**
-     * Check if should use cache
+     * 
      * @return boolean
      */
-    private function isActive() {
-        //turn off on debug mode
-        if (_PS_MODE_DEV_ || _PS_DEBUG_PROFILING_)
-            return false;
+    public function install()
+    {
+        $this->createHooks();
         
-        //check that customer is not logged in
-        $customer = $this->context->customer;
-        if ($customer && $customer instanceof Customer && $customer->id > 0)
-            return false;
-        
-        //for guest checkout, check that cart is empty
-	global $cookie;
-        $cart = new Cart($cookie->id_cart);
-        if ($cart && $cart instanceof Cart && $cart->nbProducts() > 0)
-            return false;
+        return parent::install() &&
+                $this->registerHook("actionCategoryAdd") &&
+                $this->registerHook("actionCategoryUpdate") &&
+                $this->registerHook("actionCategoryDelete") &&
+                $this->registerHook("actionProductAdd") &&
+                $this->registerHook("actionProductUpdate") &&
+                $this->registerHook("actionProductDelete") &&
+                $this->registerHook("actionProductSave") &&
+                $this->registerHook("displayHeader") &&
+                $this->registerHook("actionResponse");
+    }
+    
+    /**
+     * 
+     * @return boolean
+     */
+    public function uninstall()
+    {
+        return parent::uninstall() &&
+                $this->unregisterHook("actionCategoryAdd") &&
+                $this->unregisterHook("actionCategoryUpdate") &&
+                $this->unregisterHook("actionCategoryDelete") &&
+                $this->unregisterHook("actionProductAdd") &&
+                $this->unregisterHook("actionProductUpdate") &&
+                $this->unregisterHook("actionProductDelete") &&
+                $this->unregisterHook("actionProductSave") &&
+                $this->unregisterHook("displayHeader") &&
+                $this->unregisterHook("actionResponse");
+    }
+
+    /**
+     * If a cached page exists for the current request
+     * return it and abort 
+     */
+    public function hookDisplayHeader()
+    {
+        if ($this->isActive() && ($html = $this->load())) {
+            ob_clean();
             
-        //disable on ajax and non-GET requests
-        $active = !Tools::getValue('ajax', false);
-        $active = $active && $_SERVER['REQUEST_METHOD'] === 'GET';
-		
-        return $active;
+            if (static::CUSTOMER_HEADER) {
+                header("X-Xtremecached: True");
+            }
+            
+            die($html);
+        }
     }
     
     /**
-     * Get cache engine
-     * @return BasePhpFastCache 
+     * Store response in cache
+     * 
+     * @param array $params
      */
-    private function getFastCache() {
-        phpFastCache::setup('path', __DIR__.DS.'xcache');
-        return phpFastCache('sqlite');
+    public function hookActionResponse(array $params)
+    {
+        if ($this->isActive()) {
+            $this->store($params["html"]);
+        }
     }
     
     /**
-     * Map url to cache key
-     * @return string 
+     * Handle reactive hooks
+     * 
+     * @param string $name
+     * @param array $arguments
+     * @return mixed
      */
-    private function getCacheKey($url=NULL) {
-        if ($url === NULL)
-            $url = filter_input(INPUT_SERVER, 'REQUEST_URI');
+    public function __call($name, $arguments)
+    {
+        if (static::REACTIVE && (0 === strpos(strtolower($name), 'hookaction'))) {
+            $this->cache->flush();
+        }
+        else {
+            return parent::__call($name, $arguments);
+        }
+    }
+
+    /**
+     * Test if current page is to be cached
+     * 
+     * @return boolean
+     */
+    private function isActive()
+    {
+        $cart = $this->context->cart;
         
-        $url = 'device-'.$this->getDevice().
-                '-lang-'.$this->context->language->id.
-                '-shop-'.$this->context->shop->id.'-'.
-                $url;
-        
-        $url = md5($url);
-        return $url;
+        return     !_PS_DEBUG_PROFILING_                                            // skip when profiling
+                && !_PS_MODE_DEV_                                                   // skip when debugging
+                && is_a($this->context->controller, FrontControllerCore::class)     // skip on back-end
+                && Configuration::get("PS_SHOP_ENABLE")                             // skip on catalogue mode
+                && !Tools::getValue("ajax")                                         // skip on AJAX requests
+                && filter_input(INPUT_SERVER, "REQUEST_METHOD") === "GET"           // skip on POST requests
+                && $cart->id_customer < 1                                           // skip if user is logged in
+                && $cart->nbProducts() < 1                                          // skip if cart is not empty
+                && $this->isNotExcluded($cart->id_lang, static::EXCLUDED_LANGS)
+                && $this->isNotExcluded($cart->id_shop, static::EXCLUDE_SHOPS)
+                && $this->isNotExcluded($cart->id_currency, static::EXCLUDE_CURRENCIES)
+                && $this->isNotExcluded($this->context->country->id, static::EXCLUDE_COUNTRIES);
     }
     
     /**
-     * Polyfill for Prestashop 1.6 Context::getDevice()
-     * @return string type of device
+     * Get cached response
+     * 
+     * @return string
      */
-     private function getDevice() {
-     	require_once(_PS_TOOL_DIR_.'mobile_Detect/Mobile_Detect.php');
-		$mobile_detect = new Mobile_Detect();
-		return $mobile_detect->isTablet() ? 'tablet' : ($mobile_detect->isMobile() ? 'mobile' : 'desktop');
-     }
+    private function load()
+    {
+        return $this->cache->get($this->key());
+    }
+    
+    /**
+     * Store response
+     * 
+     * @param string $html
+     * @return mixed
+     */
+    private function store($html)
+    {
+        $key = $this->key();
+        $reponse = sprintf("<!-- cached on %s -->\n%s", date("Y-m-d H:i:s"), $html);
+        
+        return $this->cache->set($key, $reponse, static::TTL);
+    }
+    
+    /**
+     * Get unique key for current request
+     * 
+     * @return string
+     */
+    private function key()
+    {
+        return implode("-", [
+            filter_input(INPUT_SERVER, "REQUEST_URI"),
+            (int) $this->context->cart->id_currency,
+            (int) $this->context->cart->id_lang,
+            (int) $this->context->cart->id_shop,
+            (int) $this->context->country->id,
+            (int) $this->context->getDevice()
+        ]);
+    }
+    
+    /**
+     * Check if given id is excluded from cache
+     * 
+     * @param int $id
+     * @param array $pool
+     * @return bool
+     */
+    private function isNotExcluded($id, array $pool)
+    {
+        return array_search($id, $pool) === false;
+    }
+    
+    /**
+     * Create needed hooks in DB
+     * 
+     */
+    private function createHooks()
+    {
+        $id = Hook::getIdByName("actionResponse");
+        
+        if (!$id) {
+            $hook = new Hook();
+            $hook->hydrate([
+                "name"          => "actionResponse",
+                "title"         => "actionResponse",
+                "description"   => "Run before sending response to the browser",
+                "position"      => 1,
+                "live_edit"     => 0
+            ]);
+            $hook->save();
+        }
+    }
 }
